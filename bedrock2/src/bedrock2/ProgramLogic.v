@@ -22,7 +22,8 @@ Goal True.
 Abort.
 
 Require Import Ltac2.Ltac2.
-Ltac2 rec splitcmd (cmd : constr) : unit :=
+
+Local Ltac2 rec splitcmd (cmd : constr) : unit :=
   match! cmd with
     | cmd.seq ?cmd1 ?cmd2 =>
         set (cmd.seq $cmd1 $cmd2) in *; splitcmd cmd1; splitcmd cmd2
@@ -30,52 +31,47 @@ Ltac2 rec splitcmd (cmd : constr) : unit :=
     | cmd.while ?expr ?cmd => set (cmd.while $expr $cmd) in *; splitcmd cmd
     | _ => ()
   end.
+
+(* TODO move head and instance_of to coqutil? *)
+Local Ltac2 Notation "instance_of" type(constr) :=
+  lazy_match! Ltac2.Constr.pretype (preterm:(_ : $type)) with ?instance => instance end.
+
+Local Ltac2 rec head (t : constr) : constr :=
+  lazy_match! t with
+    | ?f _ => head f
+    | _ => t
+  end.
+
+Local Ltac2 function_body (proc : constr) : constr :=
+  match! eval cbv in $proc with (_, ?fbody) => fbody end.
+
+(* TODO prevent duplicates. *)
+Local Ltac2 rec callee_specs (cmd : constr) : constr list :=
+  match! cmd with
+    | cmd.cond _ ?c1 ?c2  => List.append (callee_specs c1) (callee_specs c2)
+    | cmd.seq ?c1 ?c2 => List.append (callee_specs c1) (callee_specs c2)
+    | cmd.while _ ?c => callee_specs c
+    | cmd.stackalloc _ _ ?c => callee_specs c
+    | cmd.call _ ?f _ => [instance_of (spec_of $f)]
+    | _ => []
+  end.
+
+Local Ltac2 program_logic_goal_for_function (proc : constr) : unit := 
+  let fname := constr_string_basename_of_constr_reference (head proc) in
+  let fname_spec := instance_of (spec_of $fname) in
+  let fbody := function_body proc in
+  let goal := (fun (functions : constr) =>
+    List.fold_right (fun premise_spec conclusion => '(($premise_spec $functions) -> $conclusion)) (callee_specs fbody) '($fname_spec $functions)) in
+  exact (forall (functions : @map.rep _ _ Semantics.env) (EnvContains : map.get functions $fname = Some $proc),
+    ltac2:(let g := goal &functions in exact $g)
+  ).
+
 Set Default Proof Mode "Classic".
 
-(* TODO replace callees by callees' to avoid duplicates *)
-
-Fixpoint callees (c : Syntax.cmd) : list String.string :=
-  match c with
-  | cmd.cond _ c1 c2 | cmd.seq c1 c2 => callees c1 ++ callees c2
-  | cmd.while _ c | cmd.stackalloc _ _ c => callees c
-  | cmd.call _ f _ => cons f nil
-  | _ => nil
-  end.
-
-Fixpoint callees' (c : Syntax.cmd) : list String.string :=
-  match c with
-  | cmd.cond _ c1 c2 | cmd.seq c1 c2 => ListSet.list_union String.eqb (callees c1) (callees c2)
-  | cmd.while _ c | cmd.stackalloc _ _ c => callees' c
-  | cmd.call _ f _ => cons f nil
-  | _ => nil
-  end.
-
-(* returns a list of (caller, list_of_direct_callees) tuples *)
-Definition callgraph: list (String.string * Syntax.func) ->
-                      list (String.string * list String.string) :=
-  List.map (fun '(fname, (_, _, fbody)) => (fname, callees' fbody)).
-
-Ltac assuming_correctness_of_in callees functions P :=
-  lazymatch callees with
-  | nil => P
-  | cons ?f ?callees =>
-    let f_spec := lazymatch constr:(_:spec_of f) with ?x => x end in
-    constr:(f_spec functions -> ltac:(let t := assuming_correctness_of_in callees functions P in exact t))
-  end.
-Import String List coqutil.Macros.ident_to_string.
-
-Ltac program_logic_goal_for_function proc :=
-  let __ := constr:(proc : Syntax.func) in
-  constr_string_basename_of_constr_reference_cps ltac:(Tactics.head proc) ltac:(fun fname =>
-  let spec := lazymatch constr:(_:spec_of fname) with ?s => s end in
-  exact (forall (functions : @map.rep _ _ Semantics.env) (EnvContains : map.get functions fname = Some proc), ltac:(
-    let callees := eval cbv in (callees (snd proc)) in
-    let s := assuming_correctness_of_in callees functions (spec functions) in
-    exact s))).
 Definition program_logic_goal_for (_ : Syntax.func) (P : Prop) := P.
 
-Notation "program_logic_goal_for_function! proc" := (program_logic_goal_for proc ltac:(
-   program_logic_goal_for_function proc))
+Notation "program_logic_goal_for_function! proc" := (program_logic_goal_for proc ltac2:(
+   program_logic_goal_for_function (Ltac2.Constr.pretype proc)))
   (at level 10, only parsing).
 
 (* Users might want to override this with
