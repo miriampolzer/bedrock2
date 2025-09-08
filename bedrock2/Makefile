@@ -41,12 +41,12 @@ ALLDEPFLAGS=$(subst \n, ,$(ALLDEPFLAGS_NL))
 
 # We auto-update _CoqProject and _CoqProject.noex,
 # but only change their timestamp if the set of files that they list changed
-
+WARNINGS := -deprecated-since-9.0,-deprecated-since-8.20,-deprecated-from-Coq
 PRINT_DEPFLAGS_NL := printf -- '$(ALLDEPFLAGS_NL)'
 PRINT_VS_NOEX := printf -- '%s\n' $(sort $(VS_NOEX))
 PRINT_VS_EX := printf -- '%s\n' $(sort $(VS_EX))
 PRINT_COQPROJECT_NOEX := { $(PRINT_DEPFLAGS_NL); $(PRINT_VS_NOEX); }
-PRINT_COQPROJECT := { $(PRINT_DEPFLAGS_NL); $(PRINT_VS_NOEX); $(PRINT_VS_EX); }
+PRINT_COQPROJECT := { echo '-arg -w -arg $(WARNINGS)';$(PRINT_DEPFLAGS_NL); $(PRINT_VS_NOEX); $(PRINT_VS_EX); }
 OLD_COQPROJECT_NOEX_CONTENTS := $(strip $(shell cat _CoqProject.noex 2>/dev/null))
 NEW_COQPROJECT_NOEX_CONTENTS := $(strip $(shell $(PRINT_COQPROJECT_NOEX)))
 OLD_COQPROJECT_CONTENTS := $(strip $(shell cat _CoqProject 2>/dev/null))
